@@ -137,6 +137,9 @@ class VideoParams(BaseModel):
     sonilo_bgm_prompt: str = Field(default="", max_length=2000)
 
     subtitle_enabled: Optional[bool] = True
+    # False keeps subtitle.srt in the task directory without burning it into
+    # the video, so a single TTS pass yields both the clean video and the .srt.
+    subtitle_burn: Optional[bool] = True
     subtitle_position: Optional[str] = config.ui.get(
         "subtitle_position", "bottom"
     )  # top, bottom, center, custom, two_thirds_bottom

@@ -1760,13 +1760,15 @@ def _run_pipeline(
         params.video_concat_mode = VideoConcatMode(params.video_concat_mode)
 
     # 6. Generate final videos
+    # subtitle_burn=False still returns subtitle_path below; only the burn-in is skipped.
+    burned_subtitle_path = subtitle_path if params.subtitle_burn is not False else ""
     final_video_paths, combined_video_paths, generation_warnings = (
         generate_final_videos(
             task_id,
             params,
             downloaded_videos,
             audio_file,
-            subtitle_path,
+            burned_subtitle_path,
             audio_duration,
         )
     )
