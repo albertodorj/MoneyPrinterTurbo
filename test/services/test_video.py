@@ -12,6 +12,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 from loguru import logger
 from moviepy import (
     ImageClip,
@@ -530,11 +531,9 @@ class TestVideoService(unittest.TestCase):
         m = MaterialInfo()
         m.url = os.path.basename(safe_img_path)
         m.provider = "local"
-        print(m)
 
         try:
             materials = vd.preprocess_video([m], clip_duration=4)
-            print(materials)
 
             # verify result
             self.assertIsNotNone(materials)
@@ -544,7 +543,7 @@ class TestVideoService(unittest.TestCase):
             # moviepy get video info
             clip = VideoFileClip(materials[0].url)
             try:
-                print(clip)
+                self.assertGreater(clip.duration, 0)
             finally:
                 clip.close()
 
@@ -558,6 +557,11 @@ class TestVideoService(unittest.TestCase):
     def test_image_zoom_renders_keep_distinct_clip_durations(self):
         """Two tasks must not overwrite one image render with another duration."""
         class FakeImageClip:
+            mask = None
+
+            def get_frame(self, _time):
+                return np.zeros((2, 2, 3), dtype=np.uint8)
+
             def __init__(self, _path):
                 self.duration = 0
 
@@ -572,7 +576,7 @@ class TestVideoService(unittest.TestCase):
                 return self
 
         class FakeCompositeClip:
-            def __init__(self, clips):
+            def __init__(self, clips, bg_color=None):
                 self.duration = clips[0].duration
 
             def write_videofile(self, output, **_kwargs):
@@ -594,6 +598,11 @@ class TestVideoService(unittest.TestCase):
     def test_failed_image_zoom_render_preserves_previous_complete_clip(self):
         """A failed rerender must leave the last verified MP4 available."""
         class FakeImageClip:
+            mask = None
+
+            def get_frame(self, _time):
+                return np.zeros((2, 2, 3), dtype=np.uint8)
+
             duration = 0
 
             def __init__(self, _path):
@@ -612,7 +621,7 @@ class TestVideoService(unittest.TestCase):
         writes = 0
 
         class FakeCompositeClip:
-            def __init__(self, _clips):
+            def __init__(self, _clips, bg_color=None):
                 pass
 
             def write_videofile(self, output, **_kwargs):
@@ -635,7 +644,7 @@ class TestVideoService(unittest.TestCase):
             self.assertEqual(Path(output).read_bytes(), b"complete")
             self.assertEqual(
                 sorted(path.name for path in Path(temp_dir).iterdir()),
-                ["image.png.zoom-5.mp4"],
+                [Path(output).name],
             )
 
     def test_preprocess_video_rejects_material_outside_local_videos(self):
@@ -857,7 +866,7 @@ class TestVideoService(unittest.TestCase):
             vd.os.path,
             "abspath",
             return_value=r"C:\Users\Test User's Videos\clip.mp4",
-        ):
+        ), patch.object(vd.os, "sep", "\\"):
             self.assertEqual(
                 vd._format_ffmpeg_concat_path(
                     r"C:\Users\Test User's Videos\clip.mp4"
@@ -1389,6 +1398,33 @@ class TestVideoService(unittest.TestCase):
         self.assertLess(command.index("-t"), len(command) - 1)
         self.assertNotEqual(command[-1], output_file)
 
+    def test_concat_video_clips_never_reads_the_console(self):
+        """
+        FFmpeg reads keys from its stdin, the console of webui.bat, main.py or
+        cli.py. A "q" typed there ends the joined video early and a "c" makes
+        FFmpeg wait for Enter. The other FFmpeg calls pass -nostdin too.
+        """
+
+        def fake_run(command, capture_output, text, check, **kwargs):
+            Path(command[-1]).write_bytes(b"encoded-video")
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            clip_file = os.path.join(temp_dir, "clip.mp4")
+            output_file = os.path.join(temp_dir, "combined.mp4")
+            Path(clip_file).write_bytes(b"fake")
+
+            with patch.object(vd.subprocess, "run", side_effect=fake_run) as run:
+                vd.concat_video_clips_with_ffmpeg(
+                    clip_files=[clip_file],
+                    output_file=output_file,
+                    threads=1,
+                    output_dir=temp_dir,
+                )
+
+        command = run.call_args.args[0]
+        self.assertIn("-nostdin", command[: command.index("-i")])
+
     def test_concat_video_clips_logs_heartbeat_while_ffmpeg_runs(self):
         """
         拼接时 subprocess.run 会阻塞到 ffmpeg 退出，期间项目不再产生任何日志，用户
@@ -1831,7 +1867,6 @@ class TestVideoService(unittest.TestCase):
                 font=font_path,
                 fontsize=30
             )
-            print(wrapped_text_en, text_height_en)
             # verify text is wrapped
             self.assertIn("\n", wrapped_text_en)
             
@@ -1843,7 +1878,6 @@ class TestVideoService(unittest.TestCase):
                 font=font_path,
                 fontsize=30
             )   
-            print(wrapped_text_zh, text_height_zh)
             # verify chinese text is wrapped
             self.assertIn("\n", wrapped_text_zh)
         except Exception as e:
